@@ -1,12 +1,11 @@
 // Copyright 2020 Juan Marcelo Portillo. All Rights Reserved.
 
 
-#include "TransformerPawn.h"
+#include "TransformerComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 
-#include "Net/UnrealNetwork.h"
 #include "Kismet/GameplayStatics.h"
 
 /* Gizmos */
@@ -19,24 +18,25 @@
 #include "FocusableObject.h"
 
 // Sets default values
-ATransformerPawn::ATransformerPawn()
+UTransformerComponent::UTransformerComponent()
 {
 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryComponentTick.bCanEverTick = true;
 
-	GizmoPlacement			= EGizmoPlacement::GP_OnLastSelection;
-	CurrentTransformation	= ETransformationType::TT_Translation;
-	CurrentDomain			= ETransformationDomain::TD_None;
-	CurrentSpaceType		= ESpaceType::ST_World;
-	TranslationGizmoClass	= ATranslationGizmo::StaticClass();
-	RotationGizmoClass		= ARotationGizmo::StaticClass();
-	ScaleGizmoClass			= AScaleGizmo::StaticClass();
+	GizmoPlacement = EGizmoPlacement::GP_OnLastSelection;
+	CurrentTransformation = ETransformationType::TT_Translation;
+	CurrentDomain = ETransformationDomain::TD_None;
+	CurrentSpaceType = ESpaceType::ST_World;
+	TranslationGizmoClass = ATranslationGizmo::StaticClass();
+	RotationGizmoClass = ARotationGizmo::StaticClass();
+	ScaleGizmoClass = AScaleGizmo::StaticClass();
 
 	CloneReplicationCheckFrequency = 0.05f;
 	MinimumCloneReplicationTime = 0.01f;
 
 	bResyncSelection = false;
-	bReplicates = false;
+	SetIsReplicated(false);
+
 	bIgnoreNonReplicatedObjects = false;
 
 	ResetDeltaTransform(AccumulatedDeltaTransform);
@@ -52,14 +52,14 @@ ATransformerPawn::ATransformerPawn()
 	bComponentBased = false;
 }
 
-void ATransformerPawn::GetLifetimeReplicatedProps(
+void UTransformerComponent::GetLifetimeReplicatedProps(
 	TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	//Fill here if we need to replicate Properties. For now, nothing needs constant replication/check
 }
 
-UObject* ATransformerPawn::GetUFocusable(USceneComponent* Component) const
+UObject* UTransformerComponent::GetUFocusable(USceneComponent* Component) const
 {
 	if (!Component) return nullptr;
 	if (bComponentBased)
@@ -69,21 +69,20 @@ UObject* ATransformerPawn::GetUFocusable(USceneComponent* Component) const
 	return nullptr;
 }
 
-void ATransformerPawn::SetTransform(USceneComponent* Component, const FTransform& Transform)
+void UTransformerComponent::SetTransform(USceneComponent* Component, const FTransform& Transform)
 {
 	if (!Component) return;
 	if (UObject* focusableObject = GetUFocusable(Component))
 	{
 		IFocusableObject::Execute_OnNewTransformation(focusableObject, this, Component, Transform, bComponentBased);
 		if (bTransformUFocusableObjects)
-			Component->SetWorldTransform(Transform);
+			Component->SetWorldTransform(Transform, false, nullptr, ETeleportType::TeleportPhysics);
 	}
 	else
-		Component->SetWorldTransform(Transform);
-
+		Component->SetWorldTransform(Transform, false, nullptr, ETeleportType::TeleportPhysics);
 }
 
-void ATransformerPawn::Select(USceneComponent* Component, bool* bImplementsUFocusable)
+void UTransformerComponent::Select(USceneComponent* Component, bool* bImplementsUFocusable)
 {
 	UObject* focusableObject = GetUFocusable(Component);
 	if (focusableObject)
@@ -92,7 +91,7 @@ void ATransformerPawn::Select(USceneComponent* Component, bool* bImplementsUFocu
 		*bImplementsUFocusable = !!focusableObject;
 }
 
-void ATransformerPawn::Deselect(USceneComponent* Component, bool* bImplementsUFocusable)
+void UTransformerComponent::Deselect(USceneComponent* Component, bool* bImplementsUFocusable)
 {
 	UObject* focusableObject = GetUFocusable(Component);
 	if (focusableObject)
@@ -101,7 +100,7 @@ void ATransformerPawn::Deselect(USceneComponent* Component, bool* bImplementsUFo
 		*bImplementsUFocusable = !!focusableObject;
 }
 
-void ATransformerPawn::FilterHits(TArray<FHitResult>& outHits)
+void UTransformerComponent::FilterHits(TArray<FHitResult>& outHits)
 {
 	//eliminate all outHits that have non-replicated objects
 	if (bIgnoreNonReplicatedObjects)
@@ -109,10 +108,10 @@ void ATransformerPawn::FilterHits(TArray<FHitResult>& outHits)
 		for (auto Iter = outHits.CreateIterator(); Iter; ++Iter)
 		{
 			//don't remove Gizmos! They do not replicate by default 
-			if(Cast<ABaseGizmo>(Iter->Actor))
+			if (Cast<ABaseGizmo>(Iter->GetActor()))
 				continue;
-		
-			if (Iter->Actor.IsValid() && Iter->Actor->IsSupportedForNetworking())
+
+			if (Iter->GetActor() && Iter->GetActor()->IsSupportedForNetworking())
 			{
 				if (bComponentBased)
 				{
@@ -123,41 +122,42 @@ void ATransformerPawn::FilterHits(TArray<FHitResult>& outHits)
 					continue; //actors only consider whether they replicate
 			}
 
-			if (Iter->Actor.IsValid() && Iter->Component.IsValid())
+			if (Iter->GetActor() && Iter->Component.IsValid())
 			{
-				UE_LOG(LogRuntimeTransformer, Warning, TEXT("Removing (Actor: %s   ComponentHit:  %s) from hits because it is not supported for networking.")
-					, *Iter->Actor->GetName(), *Iter->Component->GetName());
+				UE_LOG(LogRuntimeTransformer, Warning,
+				       TEXT(
+					       "Removing (Actor: %s   ComponentHit:  %s) from hits because it is not supported for networking."
+				       )
+				       , *Iter->GetActor()->GetName(), *Iter->Component->GetName());
 			}
-			
+
 			Iter.RemoveCurrent();
 		}
-
-
 	}
 }
 
-void ATransformerPawn::SetSpaceType(ESpaceType Type)
+void UTransformerComponent::SetSpaceType(ESpaceType Type)
 {
 	CurrentSpaceType = Type;
 	SetGizmo();
 }
 
-ETransformationDomain ATransformerPawn::GetCurrentDomain(bool& TransformInProgress) const
+ETransformationDomain UTransformerComponent::GetCurrentDomain(bool& TransformInProgress) const
 {
 	TransformInProgress = (CurrentDomain != ETransformationDomain::TD_None);
 	return CurrentDomain;
 }
 
-void ATransformerPawn::ClearDomain()
+void UTransformerComponent::ClearDomain()
 {
 	//Clear the Accumulated tranform when we stop Transforming
 	ResetDeltaTransform(AccumulatedDeltaTransform);
 	SetDomain(ETransformationDomain::TD_None);
 }
 
-bool ATransformerPawn::GetMouseStartEndPoints(float TraceDistance, FVector& outStartPoint, FVector& outEndPoint)
+bool UTransformerComponent::GetMouseStartEndPoints(float TraceDistance, FVector& outStartPoint, FVector& outEndPoint)
 {
-	if (APlayerController* PlayerController = Cast< APlayerController>(Controller))
+	if (APlayerController* PlayerController = GetPlayerController())
 	{
 		FVector worldLocation, worldDirection;
 		if (PlayerController->DeprojectMousePositionToWorld(worldLocation, worldDirection))
@@ -170,43 +170,43 @@ bool ATransformerPawn::GetMouseStartEndPoints(float TraceDistance, FVector& outS
 	return false;
 }
 
-UClass* ATransformerPawn::GetGizmoClass(ETransformationType TransformationType) const /* private */
+UClass* UTransformerComponent::GetGizmoClass(ETransformationType TransformationType) const /* private */
 {
 	//Assign correct Gizmo Class depending on given Transformation
 	switch (CurrentTransformation)
 	{
-	case ETransformationType::TT_Translation:	return TranslationGizmoClass;
-	case ETransformationType::TT_Rotation:		return RotationGizmoClass;
-	case ETransformationType::TT_Scale:			return ScaleGizmoClass;
-	default:									return nullptr;
+	case ETransformationType::TT_Translation: return TranslationGizmoClass;
+	case ETransformationType::TT_Rotation: return RotationGizmoClass;
+	case ETransformationType::TT_Scale: return ScaleGizmoClass;
+	default: return nullptr;
 	}
 }
 
-void ATransformerPawn::ResetDeltaTransform(FTransform& Transform)
+void UTransformerComponent::ResetDeltaTransform(FTransform& Transform)
 {
 	Transform = FTransform();
 	Transform.SetScale3D(FVector::ZeroVector);
 }
 
-void ATransformerPawn::SetDomain(ETransformationDomain Domain)
+void UTransformerComponent::SetDomain(ETransformationDomain Domain)
 {
 	CurrentDomain = Domain;
 
-	if (Gizmo.IsValid())
+	if (Gizmo)
 		Gizmo->SetTransformProgressState(CurrentDomain != ETransformationDomain::TD_None
-			, CurrentDomain);
+		                                 , CurrentDomain);
 }
 
-bool ATransformerPawn::MouseTraceByObjectTypes(float TraceDistance
-	, TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels
-	, TArray<AActor*> IgnoredActors, bool bAppendToList)
+bool UTransformerComponent::MouseTraceByObjectTypes(float TraceDistance
+                                                    , TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels
+                                                    , TArray<AActor*> IgnoredActors, bool bAppendToList)
 {
 	FVector start, end;
 	bool bTraceSuccessful = false;
 	if (GetMouseStartEndPoints(TraceDistance, start, end))
 	{
 		bTraceSuccessful = TraceByObjectTypes(start, end, CollisionChannels
-			, IgnoredActors, bAppendToList);
+		                                      , IgnoredActors, bAppendToList);
 
 		if (!bTraceSuccessful && !bAppendToList)
 			ServerDeselectAll(false);
@@ -214,46 +214,44 @@ bool ATransformerPawn::MouseTraceByObjectTypes(float TraceDistance
 	return bTraceSuccessful;
 }
 
-bool ATransformerPawn::MouseTraceByChannel(float TraceDistance
-	, TEnumAsByte<ECollisionChannel> TraceChannel, TArray<AActor*> IgnoredActors
-	, bool bAppendToList)
+bool UTransformerComponent::MouseTraceByChannel(float TraceDistance
+                                                , TEnumAsByte<ECollisionChannel> TraceChannel,
+                                                TArray<AActor*> IgnoredActors
+                                                , bool bAppendToList)
 {
 	FVector start, end;
-	bool bTraceSuccessful = false;
 	if (GetMouseStartEndPoints(TraceDistance, start, end))
 	{
-		bTraceSuccessful = TraceByChannel(start, end, TraceChannel
-			, IgnoredActors, bAppendToList);
+		bool bTraceSuccessful = TraceByChannel(start, end, TraceChannel
+		                                       , IgnoredActors, bAppendToList);
 		if (!bTraceSuccessful && !bAppendToList)
 			ServerDeselectAll(false);
 	}
 	return false;
 }
 
-bool ATransformerPawn::MouseTraceByProfile(float TraceDistance
-	, const FName& ProfileName
-	, TArray<AActor*> IgnoredActors
-	, bool bAppendToList)
+bool UTransformerComponent::MouseTraceByProfile(float TraceDistance
+                                                , const FName& ProfileName
+                                                , TArray<AActor*> IgnoredActors
+                                                , bool bAppendToList)
 {
 	FVector start, end;
 	bool bTraceSuccessful = false;
 	if (GetMouseStartEndPoints(TraceDistance, start, end))
 	{
-
 		bTraceSuccessful = TraceByProfile(start, end, ProfileName
-			, IgnoredActors, bAppendToList);
+		                                  , IgnoredActors, bAppendToList);
 		if (!bTraceSuccessful && !bAppendToList)
 			ServerDeselectAll(false);
-
 	}
 	return bTraceSuccessful;
 }
 
-bool ATransformerPawn::TraceByObjectTypes(const FVector& StartLocation
-	, const FVector& EndLocation
-	, TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels
-	, TArray<AActor*> IgnoredActors
-	, bool bAppendToList)
+bool UTransformerComponent::TraceByObjectTypes(const FVector& StartLocation
+                                               , const FVector& EndLocation
+                                               , TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels
+                                               , TArray<AActor*> IgnoredActors
+                                               , bool bAppendToList)
 {
 	if (UWorld* world = GetWorld())
 	{
@@ -268,7 +266,7 @@ bool ATransformerPawn::TraceByObjectTypes(const FVector& StartLocation
 
 		TArray<FHitResult> OutHits;
 		if (world->LineTraceMultiByObjectType(OutHits, StartLocation, EndLocation
-			, CollisionObjectQueryParams, CollisionQueryParams))
+		                                      , CollisionObjectQueryParams, CollisionQueryParams))
 		{
 			FilterHits(OutHits);
 			return HandleTracedObjects(OutHits, bAppendToList);
@@ -277,11 +275,11 @@ bool ATransformerPawn::TraceByObjectTypes(const FVector& StartLocation
 	return false;
 }
 
-bool ATransformerPawn::TraceByChannel(const FVector& StartLocation
-	, const FVector& EndLocation
-	, TEnumAsByte<ECollisionChannel> TraceChannel
-	, TArray<AActor*> IgnoredActors
-	, bool bAppendToList)
+bool UTransformerComponent::TraceByChannel(const FVector& StartLocation
+                                           , const FVector& EndLocation
+                                           , TEnumAsByte<ECollisionChannel> TraceChannel
+                                           , TArray<AActor*> IgnoredActors
+                                           , bool bAppendToList)
 {
 	if (UWorld* world = GetWorld())
 	{
@@ -290,7 +288,7 @@ bool ATransformerPawn::TraceByChannel(const FVector& StartLocation
 
 		TArray<FHitResult> OutHits;
 		if (world->LineTraceMultiByChannel(OutHits, StartLocation, EndLocation
-			, TraceChannel, CollisionQueryParams))
+		                                   , TraceChannel, CollisionQueryParams))
 		{
 			FilterHits(OutHits);
 			return HandleTracedObjects(OutHits, bAppendToList);
@@ -299,10 +297,10 @@ bool ATransformerPawn::TraceByChannel(const FVector& StartLocation
 	return false;
 }
 
-bool ATransformerPawn::TraceByProfile(const FVector& StartLocation
-	, const FVector& EndLocation
-	, const FName& ProfileName, TArray<AActor*> IgnoredActors
-	, bool bAppendToList)
+bool UTransformerComponent::TraceByProfile(const FVector& StartLocation
+                                           , const FVector& EndLocation
+                                           , const FName& ProfileName, TArray<AActor*> IgnoredActors
+                                           , bool bAppendToList)
 {
 	if (UWorld* world = GetWorld())
 	{
@@ -311,7 +309,7 @@ bool ATransformerPawn::TraceByProfile(const FVector& StartLocation
 
 		TArray<FHitResult> OutHits;
 		if (world->LineTraceMultiByProfile(OutHits, StartLocation, EndLocation
-			, ProfileName, CollisionQueryParams))
+		                                   , ProfileName, CollisionQueryParams))
 		{
 			FilterHits(OutHits);
 			return HandleTracedObjects(OutHits, bAppendToList);
@@ -320,20 +318,22 @@ bool ATransformerPawn::TraceByProfile(const FVector& StartLocation
 	return false;
 }
 
-#include "Kismet/GameplayStatics.h"
-void ATransformerPawn::Tick(float DeltaSeconds)
+void UTransformerComponent::TickComponent(float DeltaTime, enum ELevelTick TickType,
+                                          FActorComponentTickFunction* ThisTickFunction)
 {
-	Super::Tick(DeltaSeconds);
-	if (!Gizmo.IsValid()) return;
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (APlayerController* PlayerController = Cast< APlayerController>(Controller))
+	if (!Gizmo) return;
+
+	if (APlayerController* PlayerController = GetPlayerController())
 	{
 		FVector worldLocation, worldDirection;
 		if (PlayerController->IsLocalController() && PlayerController->PlayerCameraManager)
 		{
 			if (PlayerController->DeprojectMousePositionToWorld(worldLocation, worldDirection))
 			{
-				FTransform deltaTransform = UpdateTransform(PlayerController->PlayerCameraManager->GetActorForwardVector()
+				FTransform deltaTransform = UpdateTransform(
+					PlayerController->PlayerCameraManager->GetActorForwardVector()
 					, worldLocation, worldDirection);
 
 				NetworkDeltaTransform = FTransform(
@@ -341,34 +341,39 @@ void ATransformerPawn::Tick(float DeltaSeconds)
 					deltaTransform.GetLocation() + NetworkDeltaTransform.GetLocation(),
 					deltaTransform.GetScale3D() + NetworkDeltaTransform.GetScale3D());
 			}
-				
-		}			
+		}
 	}
-	
+
 	//Only consider Local View
 	if (APlayerController* LocalPlayerController = UGameplayStatics::GetPlayerController(this, 0))
 	{
 		if (LocalPlayerController->PlayerCameraManager)
 		{
 			Gizmo->ScaleGizmoScene(LocalPlayerController->PlayerCameraManager->GetCameraLocation()
-				, LocalPlayerController->PlayerCameraManager->GetActorForwardVector()
-				, LocalPlayerController->PlayerCameraManager->GetFOVAngle());
+			                       , LocalPlayerController->PlayerCameraManager->GetActorForwardVector()
+			                       , LocalPlayerController->PlayerCameraManager->GetFOVAngle());
 		}
 	}
 
 
-
-	Gizmo->UpdateGizmoSpace(CurrentSpaceType); //ToDo: change when this is called to improve performance when a gizmo is there without doing anything
+	Gizmo->UpdateGizmoSpace(CurrentSpaceType);
+	//ToDo: change when this is called to improve performance when a gizmo is there without doing anything
 }
 
-FTransform ATransformerPawn::UpdateTransform(const FVector& LookingVector
-	, const FVector& RayOrigin
-	, const FVector& RayDirection)
+APlayerController* UTransformerComponent::GetPlayerController() const
+{
+	AActor* Actor = GetOwner();
+	return (Actor) ? Cast<APlayerController>(Actor) : nullptr;
+}
+
+FTransform UTransformerComponent::UpdateTransform(const FVector& LookingVector
+                                                  , const FVector& RayOrigin
+                                                  , const FVector& RayDirection)
 {
 	FTransform deltaTransform;
 	deltaTransform.SetScale3D(FVector::ZeroVector);
 
-	if (!Gizmo.IsValid() || CurrentDomain == ETransformationDomain::TD_None) 
+	if (!Gizmo || CurrentDomain == ETransformationDomain::TD_None)
 		return deltaTransform;
 
 	FVector rayEnd = RayOrigin + 1'000'000'00 * RayDirection;
@@ -383,15 +388,15 @@ FTransform ATransformerPawn::UpdateTransform(const FVector& LookingVector
 	float* snappingValue = SnappingValues.Find(CurrentTransformation);
 
 	if (snappingEnabled && *snappingEnabled && snappingValue)
-			deltaTransform = Gizmo->GetSnappedTransform(AccumulatedDeltaTransform
-				, calcDeltaTransform, CurrentDomain, *snappingValue);
-				//GetSnapped Transform Modifies Accumulated Delta Transform by how much Snapping Occurred
-	
+		deltaTransform = Gizmo->GetSnappedTransform(AccumulatedDeltaTransform
+		                                            , calcDeltaTransform, CurrentDomain, *snappingValue);
+	//GetSnapped Transform Modifies Accumulated Delta Transform by how much Snapping Occurred
+
 	ApplyDeltaTransform(deltaTransform);
 	return deltaTransform;
 }
 
-void ATransformerPawn::ApplyDeltaTransform(const FTransform& DeltaTransform)
+void UTransformerComponent::ApplyDeltaTransform(const FTransform& DeltaTransform)
 {
 	bool* snappingEnabled = SnappingEnabled.Find(CurrentTransformation);
 	float* snappingValue = SnappingValues.Find(CurrentTransformation);
@@ -410,7 +415,7 @@ void ATransformerPawn::ApplyDeltaTransform(const FTransform& DeltaTransform)
 
 			//DeltaScale is Unrotated Scale to Get Local Scale since World Scale is not supported
 			FVector deltaScale = componentTransform.GetRotation()
-				.UnrotateVector(DeltaTransform.GetScale3D());
+			                                       .UnrotateVector(DeltaTransform.GetScale3D());
 
 
 			if (false == bRotateOnLocalAxis)
@@ -428,27 +433,27 @@ void ATransformerPawn::ApplyDeltaTransform(const FTransform& DeltaTransform)
 			/* SNAPPING LOGIC PER COMPONENT */
 			if (snappingEnabled && *snappingEnabled && snappingValue)
 				newTransform = Gizmo->GetSnappedTransformPerComponent(componentTransform
-					, newTransform, CurrentDomain, *snappingValue);
+				                                                      , newTransform, CurrentDomain, *snappingValue);
 
 			sc->SetMobility(EComponentMobility::Type::Movable);
 			SetTransform(sc, newTransform);
 		}
 		else
 		{
-			UE_LOG(LogRuntimeTransformer, Warning, TEXT("Transform will not affect Component [%s] as it is NOT Moveable!"), *sc->GetName());
+			UE_LOG(LogRuntimeTransformer, Warning,
+			       TEXT("Transform will not affect Component [%s] as it is NOT Moveable!"), *sc->GetName());
 		}
-			
 	}
 }
 
-bool ATransformerPawn::HandleTracedObjects(const TArray<FHitResult>& HitResults
-	, bool bAppendToList)
+bool UTransformerComponent::HandleTracedObjects(const TArray<FHitResult>& HitResults
+                                                , bool bAppendToList)
 {
 	//Assign as None just in case we don't hit Any Gizmos
 	ClearDomain();
 
 	//Search for our Gizmo (if Valid) First before Selecting any item
-	if (Gizmo.IsValid())
+	if (Gizmo)
 	{
 		for (auto& hitResult : HitResults)
 		{
@@ -470,7 +475,7 @@ bool ATransformerPawn::HandleTracedObjects(const TArray<FHitResult>& HitResults
 
 	for (auto& hits : HitResults)
 	{
-		if (Cast<ABaseGizmo>(hits.Actor))
+		if (Cast<ABaseGizmo>(hits.GetActor()))
 			continue; //ignore other Gizmos.
 
 		if (bComponentBased)
@@ -484,11 +489,11 @@ bool ATransformerPawn::HandleTracedObjects(const TArray<FHitResult>& HitResults
 	return false;
 }
 
-void ATransformerPawn::SetComponentBased(bool bIsComponentBased)
+void UTransformerComponent::SetComponentBased(bool bIsComponentBased)
 {
 	auto selectedComponents = DeselectAll();
 	bComponentBased = bIsComponentBased;
-	if(bComponentBased)
+	if (bComponentBased)
 		SelectMultipleComponents(selectedComponents, false);
 	else
 	{
@@ -497,24 +502,23 @@ void ATransformerPawn::SetComponentBased(bool bIsComponentBased)
 			actors.Add(c->GetOwner());
 		SelectMultipleActors(actors, false);
 	}
-
 }
 
-void ATransformerPawn::SetRotateOnLocalAxis(bool bRotateLocalAxis)
+void UTransformerComponent::SetRotateOnLocalAxis(bool bRotateLocalAxis)
 {
 	bRotateOnLocalAxis = bRotateLocalAxis;
 }
 
-void ATransformerPawn::SetTransformationType(ETransformationType TransformationType)
+void UTransformerComponent::SetTransformationType(ETransformationType TransformationType)
 {
 	//Don't continue if these are the same.
 	if (CurrentTransformation == TransformationType) return;
 
 	if (TransformationType == ETransformationType::TT_NoTransform)
-    {
-        UE_LOG(LogRuntimeTransformer, Warning, TEXT("Setting Transformation Type to None!"));
-    }
-       
+	{
+		UE_LOG(LogRuntimeTransformer, Warning, TEXT("Setting Transformation Type to None!"));
+	}
+
 
 	CurrentTransformation = TransformationType;
 
@@ -524,37 +528,37 @@ void ATransformerPawn::SetTransformationType(ETransformationType TransformationT
 	UpdateGizmoPlacement();
 }
 
-void ATransformerPawn::SetSnappingEnabled(ETransformationType TransformationType, bool bSnappingEnabled)
+void UTransformerComponent::SetSnappingEnabled(ETransformationType TransformationType, bool bSnappingEnabled)
 {
 	SnappingEnabled.Add(TransformationType, bSnappingEnabled);
 }
 
-void ATransformerPawn::SetSnappingValue(ETransformationType TransformationType, float SnappingValue)
+void UTransformerComponent::SetSnappingValue(ETransformationType TransformationType, float SnappingValue)
 {
 	SnappingValues.Add(TransformationType, SnappingValue);
 }
 
-void ATransformerPawn::GetSelectedComponents(TArray<class USceneComponent*>& outComponentList
-	, USceneComponent*& outGizmoPlacedComponent) const
+void UTransformerComponent::GetSelectedComponents(TArray<class USceneComponent*>& outComponentList
+                                                  , USceneComponent*& outGizmoPlacedComponent) const
 {
 	outComponentList = SelectedComponents;
-	if (Gizmo.IsValid())
+	if (Gizmo)
 		outGizmoPlacedComponent = Gizmo->GetParentComponent();
 }
 
-TArray<USceneComponent*> ATransformerPawn::GetSelectedComponents() const
+TArray<USceneComponent*> UTransformerComponent::GetSelectedComponents() const
 {
 	return SelectedComponents;
 }
 
-void ATransformerPawn::CloneSelected(bool bSelectNewClones
-	, bool bAppendToList)
+void UTransformerComponent::CloneSelected(bool bSelectNewClones
+                                          , bool bAppendToList)
 {
-	if (GetLocalRole() < ROLE_Authority)
-    {
-        UE_LOG(LogRuntimeTransformer, Warning, TEXT("Cloning in a Non-Authority! Please use the Clone RPCs instead"));
-    }
-		
+	if (GetOwnerRole() < ROLE_Authority)
+	{
+		UE_LOG(LogRuntimeTransformer, Warning, TEXT("Cloning in a Non-Authority! Please use the Clone RPCs instead"));
+	}
+
 
 	auto CloneComponents = CloneFromList(SelectedComponents);
 
@@ -562,14 +566,13 @@ void ATransformerPawn::CloneSelected(bool bSelectNewClones
 		SelectMultipleComponents(CloneComponents, bAppendToList);
 }
 
-TArray<class USceneComponent*> ATransformerPawn::CloneFromList(const TArray<USceneComponent*>& ComponentList)
+TArray<class USceneComponent*> UTransformerComponent::CloneFromList(const TArray<USceneComponent*>& ComponentList)
 {
-
 	TArray<class USceneComponent*> outClones;
 	if (bComponentBased)
 	{
 		TArray<USceneComponent*> Components;
-		
+
 		for (auto& i : ComponentList)
 		{
 			if (i) Components.Add(i);
@@ -587,20 +590,20 @@ TArray<class USceneComponent*> ATransformerPawn::CloneFromList(const TArray<USce
 		outClones = CloneActors(Actors);
 	}
 
-	if (CurrentDomain != ETransformationDomain::TD_None && Gizmo.IsValid())
+	if (CurrentDomain != ETransformationDomain::TD_None && Gizmo)
 		Gizmo->SetTransformProgressState(true, CurrentDomain);
 
 	return outClones;
 }
 
-TArray<class USceneComponent*> ATransformerPawn::CloneActors(const TArray<AActor*>& Actors)
+TArray<class USceneComponent*> UTransformerComponent::CloneActors(const TArray<AActor*>& Actors)
 {
 	TArray<class USceneComponent*> outClones;
 
 	UWorld* world = GetWorld();
 	if (!world) return outClones;
-	
-	TSet<AActor*>	actorsProcessed;
+
+	TSet<AActor*> actorsProcessed;
 	TArray<AActor*> actorsToSelect;
 	for (auto& templateActor : Actors)
 	{
@@ -617,7 +620,7 @@ TArray<class USceneComponent*> ATransformerPawn::CloneActors(const TArray<AActor
 			templateActor->bNetStartup = false;
 
 		if (AActor* actor = world->SpawnActor(templateActor->GetClass()
-			, &spawnTransform, spawnParams))
+		                                      , &spawnTransform, spawnParams))
 		{
 			outClones.Add(actor->GetRootComponent());
 		}
@@ -625,7 +628,7 @@ TArray<class USceneComponent*> ATransformerPawn::CloneActors(const TArray<AActor
 	return outClones;
 }
 
-TArray<class USceneComponent*> ATransformerPawn::CloneComponents(const TArray<class USceneComponent*>& Components)
+TArray<class USceneComponent*> UTransformerComponent::CloneComponents(const TArray<class USceneComponent*>& Components)
 {
 	TArray<class USceneComponent*> outClones;
 
@@ -645,7 +648,6 @@ TArray<class USceneComponent*> ATransformerPawn::CloneComponents(const TArray<cl
 		if (USceneComponent* clone = Cast<USceneComponent>(
 			StaticDuplicateObject(templateComponent, owner)))
 		{
-			PostCreateBlueprintComponent(clone);
 			clone->OnComponentCreated();
 
 			clone->RegisterComponent();
@@ -656,8 +658,9 @@ TArray<class USceneComponent*> ATransformerPawn::CloneComponents(const TArray<cl
 			OcCc.Add(templateComponent, clone); //Original component - Clone component
 
 			if (templateComponent == owner->GetRootComponent())
-				CcOp.Add(clone, owner->GetRootComponent()); //this will cause a loop in the maps, so we must check for this!
-			else 
+				CcOp.Add(clone, owner->GetRootComponent());
+				//this will cause a loop in the maps, so we must check for this!
+			else
 				CcOp.Add(clone, templateComponent->GetAttachParent()); //Clone component - Original parent
 		}
 	}
@@ -668,19 +671,19 @@ TArray<class USceneComponent*> ATransformerPawn::CloneComponents(const TArray<cl
 	for (auto& cp : CcOp)
 	{
 		//original parent
-		USceneComponent* parent = cp.Value; 
+		USceneComponent* parent = cp.Value;
 
 		AActor* actorOwner = cp.Value->GetOwner();
 
 		//find if we cloned the original parent
-		USceneComponent** cloneParent = OcCc.Find(parent); 
+		USceneComponent** cloneParent = OcCc.Find(parent);
 
 		if (cloneParent)
 		{
 			if (*cloneParent != cp.Key) //make sure comp is not its own parent
 				parent = *cloneParent;
 		}
-		else 
+		else
 		{
 			//couldn't find its parent, so find the parent of the parent and see if it's in the list.
 			//repeat until found or root is reached
@@ -693,7 +696,7 @@ TArray<class USceneComponent*> ATransformerPawn::CloneComponents(const TArray<cl
 					parent = cp.Value;
 					break;
 				}
-				
+
 				//check if parents have been cloned
 				cloneParent = OcCc.Find(parent->GetAttachParent());
 				if (cloneParent)
@@ -720,8 +723,8 @@ TArray<class USceneComponent*> ATransformerPawn::CloneComponents(const TArray<cl
 	return outClones;
 }
 
-void ATransformerPawn::SelectComponent(class USceneComponent* Component
-	, bool bAppendToList)
+void UTransformerComponent::SelectComponent(class USceneComponent* Component
+                                            , bool bAppendToList)
 {
 	if (!Component) return;
 
@@ -734,8 +737,8 @@ void ATransformerPawn::SelectComponent(class USceneComponent* Component
 	}
 }
 
-void ATransformerPawn::SelectActor(AActor* Actor
-	, bool bAppendToList)
+void UTransformerComponent::SelectActor(AActor* Actor
+                                        , bool bAppendToList)
 {
 	if (!Actor) return;
 
@@ -748,8 +751,8 @@ void ATransformerPawn::SelectActor(AActor* Actor
 	}
 }
 
-void ATransformerPawn::SelectMultipleComponents(const TArray<USceneComponent*>& Components
-	, bool bAppendToList)
+void UTransformerComponent::SelectMultipleComponents(const TArray<USceneComponent*>& Components
+                                                     , bool bAppendToList)
 {
 	bool bValidList = false;
 
@@ -768,11 +771,11 @@ void ATransformerPawn::SelectMultipleComponents(const TArray<USceneComponent*>& 
 		AddComponent_Internal(SelectedComponents, c);
 	}
 
-	if(bValidList) UpdateGizmoPlacement();
+	if (bValidList) UpdateGizmoPlacement();
 }
 
-void ATransformerPawn::SelectMultipleActors(const TArray<AActor*>& Actors
-	, bool bAppendToList)
+void UTransformerComponent::SelectMultipleActors(const TArray<AActor*>& Actors
+                                                 , bool bAppendToList)
 {
 	bool bValidList = false;
 	for (auto& a : Actors)
@@ -790,28 +793,28 @@ void ATransformerPawn::SelectMultipleActors(const TArray<AActor*>& Actors
 		bValidList = true;
 		AddComponent_Internal(SelectedComponents, a->GetRootComponent());
 	}
-	if(bValidList) UpdateGizmoPlacement();
+	if (bValidList) UpdateGizmoPlacement();
 }
 
-void ATransformerPawn::DeselectComponent(USceneComponent* Component)
+void UTransformerComponent::DeselectComponent(USceneComponent* Component)
 {
 	if (!Component) return;
 	DeselectComponent_Internal(SelectedComponents, Component);
 	UpdateGizmoPlacement();
 }
 
-void ATransformerPawn::DeselectActor(AActor* Actor)
+void UTransformerComponent::DeselectActor(AActor* Actor)
 {
 	if (Actor)
 		DeselectComponent(Actor->GetRootComponent());
 }
 
-TArray<USceneComponent*> ATransformerPawn::DeselectAll(bool bDestroyDeselected)
+TArray<USceneComponent*> UTransformerComponent::DeselectAll(bool bDestroyDeselected)
 {
 	TArray<USceneComponent*> componentsToDeselect = SelectedComponents;
 	for (auto& i : componentsToDeselect)
 		DeselectComponent(i);
-		//calling internal so as not to modify SelectedComponents until the last bit!
+	//calling internal so as not to modify SelectedComponents until the last bit!
 	SelectedComponents.Empty();
 	UpdateGizmoPlacement();
 
@@ -834,8 +837,8 @@ TArray<USceneComponent*> ATransformerPawn::DeselectAll(bool bDestroyDeselected)
 	return componentsToDeselect;
 }
 
-void ATransformerPawn::AddComponent_Internal(TArray<USceneComponent*>& OutComponentList
-	, USceneComponent* Component)
+void UTransformerComponent::AddComponent_Internal(TArray<USceneComponent*>& OutComponentList
+                                                  , USceneComponent* Component)
 {
 	//if (!Component) return; //assumes that previous have checked, since this is Internal.
 
@@ -852,8 +855,8 @@ void ATransformerPawn::AddComponent_Internal(TArray<USceneComponent*>& OutCompon
 		DeselectComponentAtIndex_Internal(OutComponentList, Index);
 }
 
-void ATransformerPawn::DeselectComponent_Internal(TArray<USceneComponent*>& OutComponentList
-	, USceneComponent* Component)
+void UTransformerComponent::DeselectComponent_Internal(TArray<USceneComponent*>& OutComponentList
+                                                       , USceneComponent* Component)
 {
 	//if (!Component) return; //assumes that previous have checked, since this is Internal.
 
@@ -862,7 +865,7 @@ void ATransformerPawn::DeselectComponent_Internal(TArray<USceneComponent*>& OutC
 		DeselectComponentAtIndex_Internal(OutComponentList, Index);
 }
 
-void ATransformerPawn::DeselectComponentAtIndex_Internal(
+void UTransformerComponent::DeselectComponentAtIndex_Internal(
 	TArray<USceneComponent*>& OutComponentList
 	, int32 Index)
 {
@@ -875,17 +878,15 @@ void ATransformerPawn::DeselectComponentAtIndex_Internal(
 		OutComponentList.RemoveAt(Index);
 		OnComponentSelectionChange(Component, false, bImplementsInterface);
 	}
-
 }
 
-void ATransformerPawn::SetGizmo()
+void UTransformerComponent::SetGizmo()
 {
-
 	//If there are selected components, then we see whether we need to create a new gizmo.
 	if (SelectedComponents.Num() > 0)
 	{
 		bool bCreateGizmo = true;
-		if (Gizmo.IsValid())
+		if (Gizmo)
 		{
 			if (CurrentTransformation == Gizmo->GetGizmoType())
 			{
@@ -895,7 +896,6 @@ void ATransformerPawn::SetGizmo()
 			{
 				// Destroy the current gizmo as the transformation types do not match
 				Gizmo->Destroy();
-				Gizmo.Reset();
 			}
 		}
 
@@ -907,7 +907,7 @@ void ATransformerPawn::SetGizmo()
 				if (GizmoClass)
 				{
 					Gizmo = Cast<ABaseGizmo>(world->SpawnActor(GizmoClass));
-					Gizmo->OnGizmoStateChange.AddDynamic(this, &ATransformerPawn::OnGizmoStateChanged);
+					Gizmo->OnGizmoStateChange.AddDynamic(this, &UTransformerComponent::OnGizmoStateChanged);
 				}
 			}
 		}
@@ -915,40 +915,41 @@ void ATransformerPawn::SetGizmo()
 	//Since there are no selected components, we must destroy any gizmos present
 	else
 	{
-		if (Gizmo.IsValid())
+		if (Gizmo)
 		{
 			Gizmo->Destroy();
-			Gizmo.Reset();
+			Gizmo = nullptr;
 		}
 	}
-
-
 }
 
-void ATransformerPawn::UpdateGizmoPlacement()
+void UTransformerComponent::UpdateGizmoPlacement()
 {
 	SetGizmo();
 	//means that there are no active gizmos (no selections) so nothing to do in this func
-	if (!Gizmo.IsValid()) return;
+	if (!Gizmo) return;
 
 	USceneComponent* ComponentToAttachTo = nullptr;
 
 	switch (GizmoPlacement)
 	{
-	case EGizmoPlacement::GP_OnFirstSelection: 
-		ComponentToAttachTo = SelectedComponents[0]; break;
+	case EGizmoPlacement::GP_OnFirstSelection:
+		ComponentToAttachTo = SelectedComponents[0];
+		break;
 	case EGizmoPlacement::GP_OnLastSelection:
-		ComponentToAttachTo = SelectedComponents.Last(); break;
+		ComponentToAttachTo = SelectedComponents.Last();
+		break;
+	default: ;
 	}
 
 	if (ComponentToAttachTo)
 	{
 		Gizmo->AttachToComponent(ComponentToAttachTo
-		, FAttachmentTransformRules::SnapToTargetIncludingScale);
+		                         , FAttachmentTransformRules::SnapToTargetIncludingScale);
 	}
 	else
 	{
-	//	Gizmo->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+		//	Gizmo->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 	}
 
 	Gizmo->UpdateGizmoSpace(CurrentSpaceType);
@@ -958,18 +959,20 @@ void ATransformerPawn::UpdateGizmoPlacement()
 ///////////////////////// NETWORKING ////////////////////////////////////////////////////////////////////////
 
 
-void ATransformerPawn::ReplicatedMouseTraceByObjectTypes(float TraceDistance
-	, TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels, bool bAppendToList)
+void UTransformerComponent::ReplicatedMouseTraceByObjectTypes(float TraceDistance
+                                                              , TArray<TEnumAsByte<ECollisionChannel>>
+                                                              CollisionChannels,
+                                                              bool bAppendToList)
 {
 	FVector start, end;
 	if (GetMouseStartEndPoints(TraceDistance, start, end))
 	{
 		bool bTraceSuccessful = TraceByObjectTypes(start, end
-			, CollisionChannels
-			, TArray<AActor*>(), bAppendToList);
+		                                           , CollisionChannels
+		                                           , TArray<AActor*>(), bAppendToList);
 
 		//Server
-		if (GetLocalRole() == ROLE_Authority)
+		if (GetOwnerRole() == ROLE_Authority)
 			ReplicateServerTraceResults(bTraceSuccessful, bAppendToList);
 		//Client
 		else
@@ -986,25 +989,23 @@ void ATransformerPawn::ReplicatedMouseTraceByObjectTypes(float TraceDistance
 				else
 					ServerSetDomain(CurrentDomain);
 			}
-			
 		}
-
-		
 	}
 }
 
-void ATransformerPawn::ReplicatedMouseTraceByChannel(float TraceDistance
-	, TEnumAsByte<ECollisionChannel> CollisionChannel, bool bAppendToList)
+void UTransformerComponent::ReplicatedMouseTraceByChannel(float TraceDistance
+                                                          , TEnumAsByte<ECollisionChannel> CollisionChannel,
+                                                          bool bAppendToList)
 {
 	FVector start, end;
 	if (GetMouseStartEndPoints(TraceDistance, start, end))
 	{
 		bool bTraceSuccessful = TraceByChannel(start, end
-			, CollisionChannel
-			, TArray<AActor*>(), bAppendToList);
+		                                       , CollisionChannel
+		                                       , TArray<AActor*>(), bAppendToList);
 
 		//Server
-		if (GetLocalRole() == ROLE_Authority)
+		if (GetOwnerRole() == ROLE_Authority)
 			ReplicateServerTraceResults(bTraceSuccessful, bAppendToList);
 		//Client
 		else
@@ -1023,18 +1024,18 @@ void ATransformerPawn::ReplicatedMouseTraceByChannel(float TraceDistance
 	}
 }
 
-void ATransformerPawn::ReplicatedMouseTraceByProfile(float TraceDistance
-	, const FName& ProfileName, bool bAppendToList)
+void UTransformerComponent::ReplicatedMouseTraceByProfile(float TraceDistance
+                                                          , const FName& ProfileName, bool bAppendToList)
 {
 	FVector start, end;
 	if (GetMouseStartEndPoints(TraceDistance, start, end))
 	{
 		bool bTraceSuccessful = TraceByProfile(start, end
-			, ProfileName
-			, TArray<AActor*>(), bAppendToList);
+		                                       , ProfileName
+		                                       , TArray<AActor*>(), bAppendToList);
 
 		//Server
-		if (GetLocalRole() == ROLE_Authority)
+		if (GetOwnerRole() == ROLE_Authority)
 			ReplicateServerTraceResults(bTraceSuccessful, bAppendToList);
 		//Client
 		else
@@ -1049,28 +1050,27 @@ void ATransformerPawn::ReplicatedMouseTraceByProfile(float TraceDistance
 				ServerTraceByProfile(start, end, ProfileName, bAppendToList);
 			else
 				ServerSetDomain(CurrentDomain);
-		}		
+		}
 	}
 }
 
 
-
-TArray<AActor*> ATransformerPawn::GetIgnoredActorsForServerTrace() const
+TArray<AActor*> UTransformerComponent::GetIgnoredActorsForServerTrace() const
 {
 	TArray<AActor*> ignoredActors;
 	//Ignore Gizmo in Server Trace Test if it's not Server controlling Pawn (since Gizmo is relative)
-	if (!IsLocallyControlled())
+	if (!GetPlayerController()->IsLocalController())
 	{
-		if (Gizmo.IsValid())
-			ignoredActors.Add(Gizmo.Get());
+		if (Gizmo)
+			ignoredActors.Add(Gizmo);
 	}
 	return ignoredActors;
 }
 
-void ATransformerPawn::ReplicateServerTraceResults(bool bTraceSuccessful, bool bAppendToList)
+void UTransformerComponent::ReplicateServerTraceResults(bool bTraceSuccessful, bool bAppendToList)
 {
 	//Only perform this on Clients
-	if (!HasAuthority())
+	if (!GetOwner()->HasAuthority())
 	{
 		if (!bTraceSuccessful && !bAppendToList)
 			DeselectAll(false);
@@ -1079,12 +1079,11 @@ void ATransformerPawn::ReplicateServerTraceResults(bool bTraceSuccessful, bool b
 	}
 }
 
-void ATransformerPawn::LogSelectedComponents()
+void UTransformerComponent::LogSelectedComponents()
 {
-
 	UE_LOG(LogRuntimeTransformer, Log, TEXT("******************** SELECTED COMPONENTS LOG START ********************"));
-    UE_LOG(LogRuntimeTransformer, Log, TEXT("   * Selected Component Count: %d"), SelectedComponents.Num());
-    UE_LOG(LogRuntimeTransformer, Log, TEXT("   * -------------------------------- "));
+	UE_LOG(LogRuntimeTransformer, Log, TEXT("   * Selected Component Count: %d"), SelectedComponents.Num());
+	UE_LOG(LogRuntimeTransformer, Log, TEXT("   * -------------------------------- "));
 	for (int32 i = 0; i < SelectedComponents.Num(); ++i)
 	{
 		USceneComponent* cmp = SelectedComponents[i];
@@ -1100,27 +1099,27 @@ void ATransformerPawn::LogSelectedComponents()
 		else
 			message += TEXT("[INVALID]");
 
-        UE_LOG(LogRuntimeTransformer, Log, TEXT("   * [%d] %s"), i, *message);
+		UE_LOG(LogRuntimeTransformer, Log, TEXT("   * [%d] %s"), i, *message);
 	}
 
-    UE_LOG(LogRuntimeTransformer, Log, TEXT("******************** SELECTED COMPONENTS LOG END   ********************"));
+	UE_LOG(LogRuntimeTransformer, Log, TEXT("******************** SELECTED COMPONENTS LOG END   ********************"));
 }
 
-bool ATransformerPawn::ServerTraceByObjectTypes_Validate(
+bool UTransformerComponent::ServerTraceByObjectTypes_Validate(
 	const FVector& StartLocation, const FVector& EndLocation
 	, const TArray<TEnumAsByte<ECollisionChannel>>& CollisionChannels
-	, bool bAppendToList) 
-{ 
-	return true; 
+	, bool bAppendToList)
+{
+	return true;
 }
 
-void ATransformerPawn::ServerTraceByObjectTypes_Implementation(
+void UTransformerComponent::ServerTraceByObjectTypes_Implementation(
 	const FVector& StartLocation, const FVector& EndLocation
 	, const TArray<TEnumAsByte<ECollisionChannel>>& CollisionChannels
 	, bool bAppendToList)
 {
 	bool bTraceSuccessful = TraceByObjectTypes(StartLocation, EndLocation, CollisionChannels
-		, GetIgnoredActorsForServerTrace(), bAppendToList);
+	                                           , GetIgnoredActorsForServerTrace(), bAppendToList);
 
 	if (!bTraceSuccessful && !bAppendToList)
 		//check whether trace was successful and we're not doing multi selection
@@ -1131,20 +1130,19 @@ void ATransformerPawn::ServerTraceByObjectTypes_Implementation(
 }
 
 
-
-bool ATransformerPawn::ServerTraceByChannel_Validate(
+bool UTransformerComponent::ServerTraceByChannel_Validate(
 	const FVector& StartLocation, const FVector& EndLocation
 	, ECollisionChannel TraceChannel, bool bAppendToList)
 {
 	return true;
 }
 
-void ATransformerPawn::ServerTraceByChannel_Implementation(
+void UTransformerComponent::ServerTraceByChannel_Implementation(
 	const FVector& StartLocation, const FVector& EndLocation
 	, ECollisionChannel TraceChannel, bool bAppendToList)
 {
 	bool bTraceSuccessful = TraceByChannel(StartLocation, EndLocation, TraceChannel
-		, GetIgnoredActorsForServerTrace(), bAppendToList);
+	                                       , GetIgnoredActorsForServerTrace(), bAppendToList);
 
 	if (!bTraceSuccessful && !bAppendToList)
 		//check whether trace was successful and we're not doing multi selection
@@ -1155,148 +1153,158 @@ void ATransformerPawn::ServerTraceByChannel_Implementation(
 }
 
 
-
-bool ATransformerPawn::ServerTraceByProfile_Validate(const FVector& StartLocation
-	, const FVector& EndLocation, const FName& ProfileName, bool bAppendToList) 
-{ 
-	return true; 
+bool UTransformerComponent::ServerTraceByProfile_Validate(const FVector& StartLocation
+                                                          , const FVector& EndLocation, const FName& ProfileName,
+                                                          bool bAppendToList)
+{
+	return true;
 }
 
 
-void ATransformerPawn::ServerTraceByProfile_Implementation(
+void UTransformerComponent::ServerTraceByProfile_Implementation(
 	const FVector& StartLocation, const FVector& EndLocation
 	, const FName& ProfileName, bool bAppendToList)
 {
 	bool bTraceSuccessful = TraceByProfile(StartLocation, EndLocation, ProfileName
-		, GetIgnoredActorsForServerTrace(), bAppendToList);
+	                                       , GetIgnoredActorsForServerTrace(), bAppendToList);
 
-	if (!bTraceSuccessful && !bAppendToList) 
+	if (!bTraceSuccessful && !bAppendToList)
 		//check whether trace was successful and we're not doing multi selection
-		DeselectAll(false); 
+		DeselectAll(false);
 
 	MulticastSetDomain(CurrentDomain);
 	MulticastSetSelectedComponents(SelectedComponents);
 }
 
-bool ATransformerPawn::ServerClearDomain_Validate() 
-{ 
-	return true; 
+bool UTransformerComponent::ServerClearDomain_Validate()
+{
+	return true;
 }
-void ATransformerPawn::ServerClearDomain_Implementation()
+
+void UTransformerComponent::ServerClearDomain_Implementation()
 {
 	MulticastClearDomain();
 }
 
-void ATransformerPawn::MulticastClearDomain_Implementation()
+void UTransformerComponent::MulticastClearDomain_Implementation()
 {
 	ClearDomain();
 }
 
-bool ATransformerPawn::ServerApplyTransform_Validate(const FTransform& DeltaTransform)
+bool UTransformerComponent::ServerApplyTransform_Validate(const FTransform& DeltaTransform)
 {
 	return true;
 }
-void ATransformerPawn::ServerApplyTransform_Implementation(const FTransform& DeltaTransform)
+
+void UTransformerComponent::ServerApplyTransform_Implementation(const FTransform& DeltaTransform)
 {
 	MulticastApplyTransform(DeltaTransform);
 }
 
-void ATransformerPawn::MulticastApplyTransform_Implementation(const FTransform& DeltaTransform)
+void UTransformerComponent::MulticastApplyTransform_Implementation(const FTransform& DeltaTransform)
 {
-	if (Controller && !Controller->IsLocalController()) //only apply to others
+	if (GetPlayerController() && !GetPlayerController()->IsLocalController()) //only apply to others
 		ApplyDeltaTransform(DeltaTransform);
 }
 
 
-void ATransformerPawn::ReplicateFinishTransform()
+void UTransformerComponent::ReplicateFinishTransform()
 {
 	ServerClearDomain();
 	ServerApplyTransform(NetworkDeltaTransform);
 	ResetDeltaTransform(NetworkDeltaTransform);
 }
 
-bool ATransformerPawn::ServerDeselectAll_Validate(bool bDestroySelected) 
-{ 
-	return true; 
+bool UTransformerComponent::ServerDeselectAll_Validate(bool bDestroySelected)
+{
+	return true;
 }
-void ATransformerPawn::ServerDeselectAll_Implementation(bool bDestroySelected)
+
+void UTransformerComponent::ServerDeselectAll_Implementation(bool bDestroySelected)
 {
 	MulticastDeselectAll(bDestroySelected);
 }
 
-void ATransformerPawn::MulticastDeselectAll_Implementation(bool bDestroySelected)
+void UTransformerComponent::MulticastDeselectAll_Implementation(bool bDestroySelected)
 {
 	DeselectAll(bDestroySelected);
 }
 
-bool ATransformerPawn::ServerSetSpaceType_Validate(ESpaceType Space) 
-{ 
-	return true; 
+bool UTransformerComponent::ServerSetSpaceType_Validate(ESpaceType Space)
+{
+	return true;
 }
-void ATransformerPawn::ServerSetSpaceType_Implementation(ESpaceType Space)
+
+void UTransformerComponent::ServerSetSpaceType_Implementation(ESpaceType Space)
 {
 	MulticastSetSpaceType(Space);
 }
 
-void ATransformerPawn::MulticastSetSpaceType_Implementation(ESpaceType Space)
+void UTransformerComponent::MulticastSetSpaceType_Implementation(ESpaceType Space)
 {
 	SetSpaceType(Space);
 }
 
 
-bool ATransformerPawn::ServerSetTransformationType_Validate(ETransformationType Transformation) 
-{ 
-	return true; 
+bool UTransformerComponent::ServerSetTransformationType_Validate(ETransformationType Transformation)
+{
+	return true;
 }
-void ATransformerPawn::ServerSetTransformationType_Implementation(ETransformationType Transformation)
+
+void UTransformerComponent::ServerSetTransformationType_Implementation(ETransformationType Transformation)
 {
 	MulticastSetTransformationType(Transformation);
 }
 
-void ATransformerPawn::MulticastSetTransformationType_Implementation(ETransformationType Transformation)
+void UTransformerComponent::MulticastSetTransformationType_Implementation(ETransformationType Transformation)
 {
 	SetTransformationType(Transformation);
 }
 
-bool ATransformerPawn::ServerSetComponentBased_Validate(bool bIsComponentBased) 
+bool UTransformerComponent::ServerSetComponentBased_Validate(bool bIsComponentBased)
 {
-	return true; 
+	return true;
 }
-void ATransformerPawn::ServerSetComponentBased_Implementation(bool bIsComponentBased)
+
+void UTransformerComponent::ServerSetComponentBased_Implementation(bool bIsComponentBased)
 {
 	MulticastSetComponentBased(bIsComponentBased);
 }
 
-void ATransformerPawn::MulticastSetComponentBased_Implementation(bool bIsComponentBased)
+void UTransformerComponent::MulticastSetComponentBased_Implementation(bool bIsComponentBased)
 {
 	SetComponentBased(bIsComponentBased);
 }
 
-bool ATransformerPawn::ServerSetRotateOnLocalAxis_Validate(bool bRotateLocalAxis) 
-{ 
-	return true; 
+bool UTransformerComponent::ServerSetRotateOnLocalAxis_Validate(bool bRotateLocalAxis)
+{
+	return true;
 }
-void ATransformerPawn::ServerSetRotateOnLocalAxis_Implementation(bool bRotateLocalAxis)
+
+void UTransformerComponent::ServerSetRotateOnLocalAxis_Implementation(bool bRotateLocalAxis)
 {
 	MulticastSetRotateOnLocalAxis(bRotateLocalAxis);
 }
 
-void ATransformerPawn::MulticastSetRotateOnLocalAxis_Implementation(bool bRotateLocalAxis)
+void UTransformerComponent::MulticastSetRotateOnLocalAxis_Implementation(bool bRotateLocalAxis)
 {
 	SetRotateOnLocalAxis(bRotateLocalAxis);
 }
 
 #include "TimerManager.h"
-bool ATransformerPawn::ServerCloneSelected_Validate(bool bSelectNewClones, bool bAppendToList)
+
+bool UTransformerComponent::ServerCloneSelected_Validate(bool bSelectNewClones, bool bAppendToList)
 {
 	return true;
 }
-void ATransformerPawn::ServerCloneSelected_Implementation(bool bSelectNewClones
-	, bool bAppendToList)
+
+void UTransformerComponent::ServerCloneSelected_Implementation(bool bSelectNewClones
+                                                               , bool bAppendToList)
 {
 	if (bComponentBased)
 	{
-		UE_LOG(LogRuntimeTransformer, Warning, TEXT("** Component Cloning is currently not supported in a Network Environment :( **"));
+		UE_LOG(LogRuntimeTransformer, Warning,
+		       TEXT("** Component Cloning is currently not supported in a Network Environment :( **"));
 		// see PluginLimitations.txt for a reason why Component Cloning is not supported
 		return;
 	}
@@ -1317,17 +1325,16 @@ void ATransformerPawn::ServerCloneSelected_Implementation(bool bSelectNewClones
 		{
 			if (!CheckUnrepTimerHandle.IsValid())
 				world->GetTimerManager().SetTimer(CheckUnrepTimerHandle, this
-					, &ATransformerPawn::CheckUnreplicatedActors
-					, CloneReplicationCheckFrequency, true, 0.0f);
+				                                  , &UTransformerComponent::CheckUnreplicatedActors
+				                                  , CloneReplicationCheckFrequency, true, 0.0f);
 		}
 	}
 }
 
-void ATransformerPawn::CheckUnreplicatedActors()
+void UTransformerComponent::CheckUnreplicatedActors()
 {
-
 	int32 RemoveCount = 0;
-	float timeElapsed = GetWorldTimerManager().GetTimerElapsed(CheckUnrepTimerHandle);
+	float timeElapsed = GetOwner()->GetWorldTimerManager().GetTimerElapsed(CheckUnrepTimerHandle);
 	for (auto& c : UnreplicatedComponentClones)
 	{
 		// rather than calling "IsSupportedForNetworking" (which returns true all the time)
@@ -1346,48 +1353,49 @@ void ATransformerPawn::CheckUnreplicatedActors()
 	if (UnreplicatedComponentClones.Num() == 0)
 	{
 		//stop calling this if no more unreplicated actors
-		GetWorldTimerManager().ClearTimer(CheckUnrepTimerHandle);
+		GetOwner()->GetWorldTimerManager().ClearTimer(CheckUnrepTimerHandle);
 
 		UE_LOG(LogRuntimeTransformer, Log, TEXT("[SERVER] Time Elapsed for %d Replicated Actors to replicate: %f")
-			, SelectedComponents.Num(), timeElapsed);
+		       , SelectedComponents.Num(), timeElapsed);
 
 		//send all the selected replicated actors!
 		MulticastSetSelectedComponents(SelectedComponents);
-
 	}
 }
 
-bool ATransformerPawn::ServerSetDomain_Validate(ETransformationDomain Domain)
+bool UTransformerComponent::ServerSetDomain_Validate(ETransformationDomain Domain)
 {
 	return true;
 }
-void ATransformerPawn::ServerSetDomain_Implementation(ETransformationDomain Domain)
+
+void UTransformerComponent::ServerSetDomain_Implementation(ETransformationDomain Domain)
 {
 	MulticastSetDomain(Domain);
 }
 
-void ATransformerPawn::MulticastSetDomain_Implementation(ETransformationDomain Domain)
+void UTransformerComponent::MulticastSetDomain_Implementation(ETransformationDomain Domain)
 {
 	SetDomain(Domain);
 }
 
-bool ATransformerPawn::ServerSyncSelectedComponents_Validate()
+bool UTransformerComponent::ServerSyncSelectedComponents_Validate()
 {
 	return true;
 }
-void ATransformerPawn::ServerSyncSelectedComponents_Implementation()
+
+void UTransformerComponent::ServerSyncSelectedComponents_Implementation()
 {
 	MulticastSetSelectedComponents(SelectedComponents);
 }
 
-void ATransformerPawn::MulticastSetSelectedComponents_Implementation(
+void UTransformerComponent::MulticastSetSelectedComponents_Implementation(
 	const TArray<USceneComponent*>& Components)
 {
-	if (GetLocalRole() < ROLE_Authority)
-    {
-        UE_LOG(LogRuntimeTransformer, Log, TEXT("MulticastSelect ComponentCount: %d"), Components.Num());
-    }
-		
+	if (GetOwnerRole() < ROLE_Authority)
+	{
+		UE_LOG(LogRuntimeTransformer, Log, TEXT("MulticastSelect ComponentCount: %d"), Components.Num());
+	}
+
 
 	DeselectAll(); //calling here because Selecting MultipleComponents empty is not going to call Deselect all
 	SelectMultipleComponents(Components, true);
@@ -1403,31 +1411,30 @@ void ATransformerPawn::MulticastSetSelectedComponents_Implementation(
 		{
 			if (!ResyncSelectionTimerHandle.IsValid())
 				world->GetTimerManager().SetTimer(ResyncSelectionTimerHandle, this
-					, &ATransformerPawn::ResyncSelection
-					, 0.1f, true, 0.0f);
+				                                  , &UTransformerComponent::ResyncSelection
+				                                  , 0.1f, true, 0.0f);
 		}
 	}
-	
 
-	if (GetLocalRole() < ROLE_Authority)
-    {
-        UE_LOG(LogRuntimeTransformer, Log, TEXT("Selected ComponentCount: %d"), SelectedComponents.Num());
-    }
-		
+
+	if (GetOwnerRole() < ROLE_Authority)
+	{
+		UE_LOG(LogRuntimeTransformer, Log, TEXT("Selected ComponentCount: %d"), SelectedComponents.Num());
+	}
 }
 
-void ATransformerPawn::ResyncSelection()
+void UTransformerComponent::ResyncSelection()
 {
 	if (bResyncSelection)
 	{
-        UE_LOG(LogRuntimeTransformer,Warning, TEXT("Resyncing Selection"));
+		UE_LOG(LogRuntimeTransformer, Warning, TEXT("Resyncing Selection"));
 		ServerSyncSelectedComponents();
 	}
 	else
 	{
-        UE_LOG(LogRuntimeTransformer, Warning, TEXT("Resyncing FINISHED"));
+		UE_LOG(LogRuntimeTransformer, Warning, TEXT("Resyncing FINISHED"));
 		//stop calling this if no more resync is needed
-		GetWorldTimerManager().ClearTimer(ResyncSelectionTimerHandle);
+		GetOwner()->GetWorldTimerManager().ClearTimer(ResyncSelectionTimerHandle);
 	}
 }
 

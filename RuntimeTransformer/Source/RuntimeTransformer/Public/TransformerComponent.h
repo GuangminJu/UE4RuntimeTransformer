@@ -5,29 +5,30 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "RuntimeTransformer.h"
-#include "TransformerPawn.generated.h"
+#include "Gizmos/BaseGizmo.h"
+#include "TransformerComponent.generated.h"
 
 UENUM(BlueprintType)
 enum class EGizmoPlacement : uint8
 {
-	GP_None					UMETA(DisplayName = "None"),
-	GP_OnFirstSelection		UMETA(DisplayName = "On First Selection"),
-	GP_OnLastSelection		UMETA(DisplayName = "On Last Selection"),
+	GP_None UMETA(DisplayName = "None"),
+	GP_OnFirstSelection UMETA(DisplayName = "On First Selection"),
+	GP_OnLastSelection UMETA(DisplayName = "On Last Selection"),
 };
 
-UCLASS()
-class RUNTIMETRANSFORMER_API ATransformerPawn : public APawn
+UCLASS(ClassGroup = (RuntimeTransformer), meta = (BlueprintSpawnableComponent))
+class RUNTIMETRANSFORMER_API UTransformerComponent : public UActorComponent
 {
 	GENERATED_BODY()
 
 public:
 	// Sets default values for this actor's properties
-	ATransformerPawn();
+	UTransformerComponent();
+
 	virtual void GetLifetimeReplicatedProps(
 		TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 private:
-
 	//Gets the UFocusable Object. If ComponentBased, returns the UFocusable Component or nullptr (if it doesn't implement)
 	// if ActorBased, returns the UFosuable Owner Actor or nullptr (if it doesn't implement)
 	class UObject* GetUFocusable(class USceneComponent* Component) const;
@@ -43,12 +44,11 @@ private:
 	// Called when the Component is removed from the SelectedComponent List
 	// Calls the IFocusableObject::Unfocus if the Component implements the UFocusable interface
 	void Deselect(class USceneComponent* Component, bool* bImplementsUFocusable = nullptr);
-	
+
 	//Used to Filter unwanted things from a list of OutHits.
 	void FilterHits(TArray<FHitResult>& outHits);
 
 public:
-
 	/*
 	* This gets called everytime a Component / Actor is going to get added.
 	* The default return is TRUE, but it can be overriden to check for additional things 
@@ -64,7 +64,7 @@ public:
 
 	//by default return true, override for custom logic
 	virtual bool ShouldSelect_Implementation(AActor* OwnerActor
-		, class USceneComponent* Component) { return true; }
+	                                         , class USceneComponent* Component) { return true; }
 
 	//Sets the Space of the Gizmo, whether its Local or World space.
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
@@ -105,9 +105,9 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	bool MouseTraceByObjectTypes(float TraceDistance
-		, TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels
-		, TArray<AActor*> IgnoredActors
-		, bool bAppendToList = false);
+	                             , TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels
+	                             , TArray<AActor*> IgnoredActors
+	                             , bool bAppendToList = false);
 
 	/**
 	 * If a Gizmo is Present, (i.e. there is a Selected Object), then
@@ -123,10 +123,10 @@ public:
 	 * @return bool Whether there was an Object traced successfully
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
-	bool MouseTraceByChannel(float TraceDistance 
-		, TEnumAsByte<ECollisionChannel> TraceChannel
-		, TArray<AActor*> IgnoredActors
-		, bool bAppendToList = false);
+	bool MouseTraceByChannel(float TraceDistance
+	                         , TEnumAsByte<ECollisionChannel> TraceChannel
+	                         , TArray<AActor*> IgnoredActors
+	                         , bool bAppendToList = false);
 
 	/**
 	 * If a Gizmo is Present, (i.e. there is a Selected Object), then
@@ -143,9 +143,9 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	bool MouseTraceByProfile(float TraceDistance
-		, const FName& ProfileName
-		, TArray<AActor*> IgnoredActors
-		, bool bAppendToList = false);
+	                         , const FName& ProfileName
+	                         , TArray<AActor*> IgnoredActors
+	                         , bool bAppendToList = false);
 
 	/**
 	 * If a Gizmo is Present, (i.e. there is a Selected Object), then
@@ -163,10 +163,10 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	bool TraceByObjectTypes(const FVector& StartLocation
-		, const FVector& EndLocation
-		, TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels
-		, TArray<AActor*> IgnoredActors
-		, bool bAppendToList = false);
+	                        , const FVector& EndLocation
+	                        , TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels
+	                        , TArray<AActor*> IgnoredActors
+	                        , bool bAppendToList = false);
 
 	/**
 	 * If a Gizmo is Present, (i.e. there is a Selected Object), then
@@ -184,10 +184,10 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	bool TraceByChannel(const FVector& StartLocation
-		, const FVector& EndLocation
-		, TEnumAsByte<ECollisionChannel> TraceChannel
-		, TArray<AActor*> IgnoredActors
-		, bool bAppendToList = false);
+	                    , const FVector& EndLocation
+	                    , TEnumAsByte<ECollisionChannel> TraceChannel
+	                    , TArray<AActor*> IgnoredActors
+	                    , bool bAppendToList = false);
 
 
 	/**
@@ -206,14 +206,17 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	bool TraceByProfile(const FVector& StartLocation
-		, const FVector& EndLocation
-		, const FName& ProfileName
-		, TArray<AActor*> IgnoredActors
-		, bool bAppendToList = false);
+	                    , const FVector& EndLocation
+	                    , const FName& ProfileName
+	                    , TArray<AActor*> IgnoredActors
+	                    , bool bAppendToList = false);
 
 	// Update every Frame
 	// Checks for Mouse Update
-	virtual void Tick(float DeltaSeconds) override;
+	virtual void TickComponent(float DeltaTime, enum ELevelTick TickType,
+	                           FActorComponentTickFunction* ThisTickFunction) override;
+
+	APlayerController* GetPlayerController() const;
 
 	/**
 	 * If the Gizmo is currently in a Valid Domain,
@@ -230,7 +233,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	FTransform UpdateTransform(const FVector& LookingVector
-		, const FVector& RayOrigin, const FVector& RayDirection);
+	                           , const FVector& RayOrigin, const FVector& RayDirection);
 
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	void ApplyDeltaTransform(const FTransform& DeltaTransform);
@@ -247,7 +250,7 @@ public:
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	bool HandleTracedObjects(const TArray<FHitResult>& HitResults
-		, bool bAppendToList = false);
+	                         , bool bAppendToList = false);
 
 	/*
 	 * Called when the Gizmo State has changed (i.e. Domain has changed)
@@ -257,10 +260,10 @@ public:
 	 */
 	UFUNCTION(BlueprintNativeEvent, Category = "Runtime Transformer")
 	void OnGizmoStateChanged(ETransformationType GizmoType, bool bTransformInProgress
-		, ETransformationDomain Domain);
+	                         , ETransformationDomain Domain);
 
 	virtual void OnGizmoStateChanged_Implementation(ETransformationType GizmoType
-		, bool bTransformInProgress, ETransformationDomain Domain)
+	                                                , bool bTransformInProgress, ETransformationDomain Domain)
 	{
 		//this should be overriden for custom logic
 	}
@@ -278,16 +281,15 @@ public:
 	*/
 	UFUNCTION(BlueprintNativeEvent, Category = "Runtime Transformer")
 	void OnComponentSelectionChange(class USceneComponent* Component
-		, bool bSelected, bool bImplementsUFocusable);
+	                                , bool bSelected, bool bImplementsUFocusable);
 
 	virtual void OnComponentSelectionChange_Implementation(class USceneComponent* Component
-		, bool bSelected, bool bImplementsUFocusable)
+	                                                       , bool bSelected, bool bImplementsUFocusable)
 	{
 		//This should be overriden for custom logic
 	}
 
 public:
-
 	/**
 	 * Whether to Set the System to work with Components (true)
 	 * or to work with Actors (false)
@@ -311,7 +313,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	void SetTransformationType(ETransformationType TransformationType);
-	
+
 	/*
 	 * Enables/Disables Snapping for a given Transformation
 	 * Snapping Value for the Given Transformation MUST NOT be 0 for Snapping to work
@@ -338,7 +340,7 @@ public:
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	void GetSelectedComponents(TArray<class USceneComponent*>& outComponentList
-		, class USceneComponent*& outGizmoPlacedComponent) const;
+	                           , class USceneComponent*& outGizmoPlacedComponent) const;
 
 	TArray<class USceneComponent*> GetSelectedComponents() const;
 
@@ -354,12 +356,10 @@ public:
 	void CloneSelected(bool bSelectNewClones = true, bool bAppendToList = false);
 
 protected:
-
 	TArray<class USceneComponent*> CloneFromList(
 		const TArray<class USceneComponent*>& ComponentList);
 
 private:
-
 	TArray<class USceneComponent*> CloneActors(
 		const TArray<AActor*>& Actors);
 
@@ -367,8 +367,6 @@ private:
 		const TArray<class USceneComponent*>& Components);
 
 public:
-
-
 	/**
 	 * Select Component adds a given Component to a list of components that will be used for the Runtime Transforms
 	 * @param Component The component to add to the list.
@@ -391,7 +389,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	void SelectMultipleComponents(const TArray<class USceneComponent*>& Components
-		, bool bAppendToList = false);
+	                              , bool bAppendToList = false);
 
 	/**
 	 * Selects all the Root Components of the Actors in given list.
@@ -399,7 +397,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Runtime Transformer")
 	void SelectMultipleActors(const TArray<AActor*>& Actors
-		, bool bAppendToList = false);
+	                          , bool bAppendToList = false);
 
 	/**
 	 * Deselects a given Component, if found on the list.
@@ -426,22 +424,21 @@ public:
 	TArray<class USceneComponent*> DeselectAll(bool bDestroyDeselected = false);
 
 private:
-
 	/*
 	The core functionality, but can be called by Selection of Multiple objects
 	so as to not call UpdateGizmo every time
 	*/
 	void AddComponent_Internal(TArray<class USceneComponent*>& OutComponentList
-		, class USceneComponent* Component);
+	                           , class USceneComponent* Component);
 
 	/*
 	The core functionality, but can be called by Selection of Multiple objects
 	so as to not call UpdateGizmo every time
 	*/
 	void DeselectComponent_Internal(TArray<class USceneComponent*>& OutComponentList
-		, class USceneComponent* Component);
+	                                , class USceneComponent* Component);
 	void DeselectComponentAtIndex_Internal(TArray<class USceneComponent*>& OutComponentList
-		, int32 Index);
+	                                       , int32 Index);
 
 	/**
 	 * Creates / Replaces Gizmo with the Current Transformation.
@@ -464,7 +461,6 @@ private:
 	void SetDomain(ETransformationDomain Domain);
 
 public:
-
 	/* 
 	* Function Similar to MouseTraceByObjectTypes
 	* Performs a Local Trace for Gizmos (since they appear differently for each player)
@@ -476,8 +472,8 @@ public:
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Replicated Runtime Transformer")
 	void ReplicatedMouseTraceByObjectTypes(float TraceDistance
-		, TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels
-		, bool bAppendToList = false);
+	                                       , TArray<TEnumAsByte<ECollisionChannel>> CollisionChannels
+	                                       , bool bAppendToList = false);
 
 	/*
 	* Function Similar to MouseTraceByChannel
@@ -490,8 +486,8 @@ public:
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Replicated Runtime Transformer")
 	void ReplicatedMouseTraceByChannel(float TraceDistance
-		, TEnumAsByte<ECollisionChannel> CollisionChannel
-		, bool bAppendToList = false);
+	                                   , TEnumAsByte<ECollisionChannel> CollisionChannel
+	                                   , bool bAppendToList = false);
 
 	/*
 	* Function Similar to MouseTraceByProfile
@@ -504,8 +500,8 @@ public:
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Replicated Runtime Transformer")
 	void ReplicatedMouseTraceByProfile(float TraceDistance
-		, const FName& ProfileName
-		, bool bAppendToList = false);
+	                                   , const FName& ProfileName
+	                                   , bool bAppendToList = false);
 
 	//Gets the List of Actors that will be ignored in the Server Trace(for now its only the current Gizmo of Actor)
 	//Since the Gizmo trace is handled locally (Gizmo appears differently to each player)
@@ -525,33 +521,36 @@ public:
 	 * Currently no Validation takes place.
 	 * @ see TraceByObjectTypes
 	 */
-	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "Replicated Runtime Transformer", meta = (DeprecatedFunction))
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "Replicated Runtime Transformer",
+		meta = (DeprecatedFunction))
 	void ServerTraceByObjectTypes(const FVector& StartLocation
-		, const FVector& EndLocation
-		, const TArray<TEnumAsByte<ECollisionChannel>>& CollisionChannels
-		, bool bAppendToList);
+	                              , const FVector& EndLocation
+	                              , const TArray<TEnumAsByte<ECollisionChannel>>& CollisionChannels
+	                              , bool bAppendToList);
 
 	/*
 	 * ServerCall, Reliable. Trace is performed in the Server.
 	 * Currently no Validation takes place.
 	 * @ see TraceByChannel
 	 */
-	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "Replicated Runtime Transformer", meta = (DeprecatedFunction))
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "Replicated Runtime Transformer",
+		meta = (DeprecatedFunction))
 	void ServerTraceByChannel(const FVector& StartLocation
-		, const FVector& EndLocation
-		, ECollisionChannel TraceChannel
-		, bool bAppendToList);
+	                          , const FVector& EndLocation
+	                          , ECollisionChannel TraceChannel
+	                          , bool bAppendToList);
 
 	/*
 	 * ServerCall, Reliable. Trace is performed in the Server.
 	 * Currently no Validation takes place.
 	 * @ see TraceByProfile, meta = (DeprecatedFunction)
 	 */
-	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "Replicated Runtime Transformer", meta = (DeprecatedFunction))
+	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "Replicated Runtime Transformer",
+		meta = (DeprecatedFunction))
 	void ServerTraceByProfile(const FVector& StartLocation
-		, const FVector& EndLocation
-		, const FName& ProfileName
-		, bool bAppendToList);
+	                          , const FVector& EndLocation
+	                          , const FName& ProfileName
+	                          , bool bAppendToList);
 
 
 	/*
@@ -685,8 +684,8 @@ public:
 	*/
 	UFUNCTION(Server, Reliable, WithValidation, BlueprintCallable, Category = "Replicated Runtime Transformer")
 	void ServerCloneSelected(bool bSelectNewClones = true
-		, bool bAppendToList = false);
-	
+	                         , bool bAppendToList = false);
+
 	/*
 	 * A function called by a Timer that checks when a List of Actors have BegunPlay
 	 * and have been replicated. Once all Actors that are on the Unreplicated list have been processed,
@@ -728,7 +727,6 @@ public:
 
 	//Networking Variables
 private:
-
 	/*
 	* Ignore Non-Replicated Objects means that the objects that do not satisfy
 	* the replication conditions will become unselectable. This only takes effect if using the ServerTracing
@@ -736,7 +734,8 @@ private:
 	* - For an actor, replicating must be on
 	* - For a component, both its owner and itself need to be replicating
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Replicated Runtime Transformer", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Replicated Runtime Transformer",
+		meta = (AllowPrivateAccess = "true"))
 	bool bIgnoreNonReplicatedObjects;
 
 	/*
@@ -747,27 +746,29 @@ private:
 	 * (so no selection occurs).
 	 * The time it actually takes to Replicate can be more because it also waits for all clone objects to have begun play.
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Replicated Runtime Transformer", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Replicated Runtime Transformer",
+		meta = (AllowPrivateAccess = "true"))
 	float MinimumCloneReplicationTime;
 
 	//The frequency at which checks are done on newly spawned clones. Whether they are suitable for replication.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Replicated Runtime Transformer", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Replicated Runtime Transformer",
+		meta = (AllowPrivateAccess = "true"))
 	float CloneReplicationCheckFrequency;
 
-	FTransform	NetworkDeltaTransform;
+	FTransform NetworkDeltaTransform;
 
 	//List of clone actor/components that need replication but haven't been replicated yet
 	TArray<class USceneComponent*> UnreplicatedComponentClones;
 
-	FTimerHandle	CheckUnrepTimerHandle;
-	FTimerHandle	ResyncSelectionTimerHandle;
+	FTimerHandle CheckUnrepTimerHandle;
+	FTimerHandle ResyncSelectionTimerHandle;
 
 
 	//Other Vars
 private:
-
 	//The Current Space being used, whether it is Local or World.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations",
+		meta = (AllowPrivateAccess = "true"))
 	ESpaceType CurrentSpaceType;
 
 	//The Transform Accumulated for Snapping
@@ -797,32 +798,36 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gizmo", meta = (AllowPrivateAccess = "true"))
 	TSubclassOf<class AScaleGizmo> ScaleGizmoClass;
 
-	UPROPERTY()
-	TWeakObjectPtr<class ABaseGizmo> Gizmo;
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = "Gizmo", meta = (AllowPrivateAccess = "true"))
+	ABaseGizmo* Gizmo;
 
 	// Tell which Domain is Selected. If NONE, then that means that there is no Selected Objects, or
 	// that the Gizmo has not been hit yet.
 	ETransformationDomain CurrentDomain;
 
 	//Tell where the Gizmo should be placed when multiple objects are selected
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations",
+		meta = (AllowPrivateAccess = "true"))
 	EGizmoPlacement GizmoPlacement;
 
 	// Var that tells which is the Current Transformation taking place
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations",
+		meta = (AllowPrivateAccess = "true"))
 	ETransformationType CurrentTransformation;
 
 	/**
 	 * Array storing Selected Components. Although a quick O(1) removal is needed (like a Set),
 	 * it is Crucial that we maintain the order of the elements as they were selected
 	 */
+	UPROPERTY()
 	TArray<class USceneComponent*> SelectedComponents;
 
 	/*
 	* Map storing the Snap values for each transformation
 	* bSnappingEnabled must be true AND, the value for the current transform MUST NOT be 0 for these values to take effect.
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations",
+		meta = (AllowPrivateAccess = "true"))
 	TMap<ETransformationType, float> SnappingValues;
 
 	/**
@@ -832,7 +837,8 @@ private:
 
 	* @see SetSnappingValue function & SnappingValues Map var
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations",
+		meta = (AllowPrivateAccess = "true"))
 	TMap<ETransformationType, bool> SnappingEnabled;
 
 	/**
@@ -841,14 +847,16 @@ private:
 	* if false, no movement transformations will be attempted on Static/Stationary Components
 
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations",
+		meta = (AllowPrivateAccess = "true"))
 	bool bForceMobility;
 
 	/*
 	 * This property only matters when multiple objects are selected.
 	 * Whether multiple objects should rotate on their local axes (true) or on the axes the Gizmo is in (false)
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations",
+		meta = (AllowPrivateAccess = "true"))
 	bool bRotateOnLocalAxis;
 
 	/**
@@ -858,11 +866,13 @@ private:
 
 	 * IN BOTH Situations, the UFocusable Objects have IFocusable::OnNewDeltaTransformation called.
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations",
+		meta = (AllowPrivateAccess = "true"))
 	bool bTransformUFocusableObjects;
 
 	//Property that checks whether a CLICK on an already selected object should deselect the object or not.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations",
+		meta = (AllowPrivateAccess = "true"))
 	bool bToggleSelectedInMultiSelection;
 
 	/*
@@ -870,7 +880,8 @@ private:
 	 or the Actors are.
 	 * This property affects how Cloning, Tracing is done and Interface checking is done
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations", meta = (AllowPrivateAccess = "true"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Runtime Transformations",
+		meta = (AllowPrivateAccess = "true"))
 	bool bComponentBased;
 
 	//Whether we need to Sync with Server if there is a mismatch in number of Selections.
